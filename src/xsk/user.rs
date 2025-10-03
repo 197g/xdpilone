@@ -69,12 +69,6 @@ impl DeviceQueue {
     }
 }
 
-impl Drop for DeviceQueue {
-    fn drop(&mut self) {
-        self.devices.remove(&self.socket.info.ctx);
-    }
-}
-
 impl RingRx {
     /// Receive some buffers.
     ///

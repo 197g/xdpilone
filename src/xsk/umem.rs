@@ -1,16 +1,13 @@
 use core::ptr::NonNull;
 
-use alloc::collections::BTreeSet;
 use alloc::sync::Arc;
 
 use crate::xdp::{SockAddrXdp, XdpDesc, XdpStatistics, XdpStatisticsV2, XdpUmemReg};
 use crate::xsk::{
-    ptr_len, BufIdx, DeviceControl, DeviceQueue, DeviceRings, IfCtx, RingCons, RingProd, RingRx,
-    RingTx, Socket, SocketConfig, SocketFd, SocketMmapOffsets, Umem, UmemChunk, UmemConfig, User,
+    ptr_len, BufIdx, DeviceQueue, DeviceRings, RingCons, RingProd, RingRx, RingTx, Socket,
+    SocketConfig, SocketFd, SocketMmapOffsets, Umem, UmemChunk, UmemConfig, User,
 };
 use crate::{Errno, LastErrno};
-
-use spin::RwLock;
 
 impl BufIdx {
     /// Convert a slice of raw numbers to buffer indices, in-place.
@@ -78,10 +75,6 @@ impl Umem {
             "Unhandled address space calculation"
         );
 
-        let devices = DeviceControl {
-            inner: Arc::new(SpinLockedControlSet::default()),
-        };
-
         // Two steps:
         // 1. Create a new XDP socket in the kernel.
         // 2. Configure it with the area and size.
@@ -90,7 +83,6 @@ impl Umem {
             config,
             fd: Arc::new(SocketFd::new()?),
             umem_area: area,
-            devices,
         };
 
         Self::configure(&umem)?;
@@ -174,22 +166,6 @@ impl Umem {
     /// broken code and race conditions writing to the same queue concurrently. It's an SPSC.
     /// Probably only the first call for each interface succeeds.
     pub fn fq_cq(&self, interface: &Socket) -> Result<DeviceQueue, Errno> {
-        if !self.devices.insert(interface.info.ctx) {
-            // We know this will just yield `-EBUSY` anyways.
-            return Err(Errno(libc::EINVAL));
-        }
-
-        struct DropableDevice<'info>(&'info IfCtx, &'info DeviceControl);
-
-        impl Drop for DropableDevice<'_> {
-            fn drop(&mut self) {
-                self.1.remove(self.0);
-            }
-        }
-
-        // Okay, got a device. Let's create the queues for it. On failure, cleanup.
-        let _tmp_device = DropableDevice(&interface.info.ctx, &self.devices);
-
         let sock = &*interface.fd;
         Self::configure_cq(sock, &self.config)?;
         let map = SocketMmapOffsets::new(sock)?;
@@ -206,10 +182,8 @@ impl Umem {
                 info: interface.info.clone(),
                 fd: interface.fd.clone(),
             },
-            devices: self.devices.clone(),
         };
 
-        core::mem::forget(_tmp_device);
         Ok(device)
     }
 
@@ -449,35 +423,6 @@ impl SocketConfig {
     ///
     /// Needs to be set for [`DeviceQueue::needs_wakeup`] and [`RingTx::needs_wakeup`].
     pub const XDP_BIND_NEED_WAKEUP: u16 = 1 << 3;
-}
-
-#[derive(Default)]
-struct SpinLockedControlSet {
-    inner: RwLock<BTreeSet<IfCtx>>,
-}
-
-impl core::ops::Deref for DeviceControl {
-    type Target = dyn super::ControlSet;
-    fn deref(&self) -> &Self::Target {
-        &*self.inner
-    }
-}
-
-impl super::ControlSet for SpinLockedControlSet {
-    fn insert(&self, ctx: IfCtx) -> bool {
-        let mut lock = self.inner.write();
-        lock.insert(ctx)
-    }
-
-    fn contains(&self, ctx: &IfCtx) -> bool {
-        let lock = self.inner.read();
-        lock.contains(ctx)
-    }
-
-    fn remove(&self, ctx: &IfCtx) {
-        let mut lock = self.inner.write();
-        lock.remove(ctx);
-    }
 }
 
 impl UmemChunk {

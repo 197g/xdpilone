@@ -110,7 +110,6 @@ pub struct Umem {
     umem_area: NonNull<[u8]>,
     config: UmemConfig,
     fd: Arc<SocketFd>,
-    devices: DeviceControl,
 }
 
 /// A raw pointer to a specific chunk in a Umem.
@@ -125,20 +124,6 @@ pub struct UmemChunk {
     ///
     /// This is the basis of the address calculation shared with the kernel.
     pub offset: u64,
-}
-
-#[derive(Clone)]
-struct DeviceControl {
-    /// The tracker, not critical for memory safety (here anyways) but correctness.
-    inner: Arc<dyn ControlSet>,
-}
-
-/// A synchronized set for tracking which `IfCtx` are taken.
-trait ControlSet: Send + Sync + 'static {
-    fn insert(&self, _: IfCtx) -> bool;
-    #[allow(unused)] // We do not provide a check operation yet.
-    fn contains(&self, _: &IfCtx) -> bool;
-    fn remove(&self, _: &IfCtx);
 }
 
 /// One prepared socket for a receive/transmit pair.
@@ -159,8 +144,6 @@ pub struct DeviceQueue {
     fcq: DeviceRings,
     /// This is also a socket.
     socket: Socket,
-    /// Reference to de-register.
-    devices: DeviceControl,
 }
 
 /// An owner of receive/transmit queues.
