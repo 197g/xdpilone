@@ -159,7 +159,35 @@ pub struct DeviceQueue {
     fcq: DeviceRings,
     /// This is also a socket.
     socket: Socket,
-    /// Reference to de-register.
+    /// Deregisters on drop.
+    registration: DeviceQueueRegistration,
+}
+
+/// The fill half of a [`DeviceQueue`].
+///
+/// Obtained by calling [`DeviceQueue::into_parts`].
+pub struct FillQueue {
+    prod: RingProd,
+    fd: Arc<SocketFd>,
+    // Held for Drop: it deregisters when the last clone is dropped.
+    #[allow(dead_code)]
+    registration: Arc<DeviceQueueRegistration>,
+}
+
+/// The completion half of a [`DeviceQueue`].
+///
+/// Obtained by calling [`DeviceQueue::into_parts`].
+pub struct CompletionQueue {
+    cons: RingCons,
+    fd: Arc<SocketFd>,
+    // Held for Drop: it deregisters when the last clone is dropped.
+    #[allow(dead_code)]
+    registration: Arc<DeviceQueueRegistration>,
+}
+
+/// Tracks registration of a device queue. When dropped, the devices are deregistered.
+pub(crate) struct DeviceQueueRegistration {
+    ctx: IfCtx,
     devices: DeviceControl,
 }
 
