@@ -18,8 +18,9 @@ extern crate alloc;
 mod xsk;
 
 pub use xsk::{
-    BufIdx, DeviceQueue, IfInfo, ReadComplete, ReadRx, RingCons, RingProd, RingRx, RingTx, Socket,
-    SocketConfig, Umem, UmemChunk, UmemConfig, User, WriteFill, WriteTx,
+    BufIdx, CompletionQueue, DeviceQueue, FillQueue, IfInfo, ReadComplete, ReadRx, RingCons,
+    RingProd, RingRx, RingTx, Socket, SocketConfig, Umem, UmemChunk, UmemConfig, User, WriteFill,
+    WriteTx,
 };
 
 /// Bindings for XDP kernel-interface, including structs.

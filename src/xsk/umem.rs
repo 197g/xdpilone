@@ -5,8 +5,9 @@ use alloc::sync::Arc;
 
 use crate::xdp::{SockAddrXdp, XdpDesc, XdpStatistics, XdpStatisticsV2, XdpUmemReg};
 use crate::xsk::{
-    ptr_len, BufIdx, DeviceControl, DeviceQueue, DeviceRings, IfCtx, RingCons, RingProd, RingRx,
-    RingTx, Socket, SocketConfig, SocketFd, SocketMmapOffsets, Umem, UmemChunk, UmemConfig, User,
+    BufIdx, DeviceControl, DeviceQueue, DeviceQueueRegistration, DeviceRings, IfCtx, RingCons,
+    RingProd, RingRx, RingTx, Socket, SocketConfig, SocketFd, SocketMmapOffsets, Umem, UmemChunk,
+    UmemConfig, User, ptr_len,
 };
 use crate::{Errno, LastErrno};
 
@@ -206,7 +207,10 @@ impl Umem {
                 info: interface.info.clone(),
                 fd: interface.fd.clone(),
             },
-            devices: self.devices.clone(),
+            registration: DeviceQueueRegistration {
+                devices: self.devices.clone(),
+                ctx: interface.info.ctx,
+            },
         };
 
         core::mem::forget(_tmp_device);

@@ -1,5 +1,11 @@
+use alloc::sync::Arc;
+
+use crate::Socket;
 use crate::xdp::XdpDesc;
-use crate::xsk::{BufIdx, DeviceQueue, RingCons, RingProd, RingRx, RingTx};
+use crate::xsk::{
+    BufIdx, CompletionQueue, DeviceQueue, DeviceQueueRegistration, DeviceRings, FillQueue,
+    RingCons, RingProd, RingRx, RingTx,
+};
 
 impl DeviceQueue {
     /// Prepare some buffers for the fill ring.
@@ -67,11 +73,121 @@ impl DeviceQueue {
         // FIXME: should somehow log this, right?
         let _err = unsafe { libc::poll(&mut poll as *mut _, 1, 0) };
     }
+
+    /// Splits the [`DeviceQueue`] into independent [`FillQueue`] and [`CompletionQueue`] halves.
+    ///
+    /// The device is deregistered when the last half is dropped.
+    pub fn into_parts(self) -> (FillQueue, CompletionQueue) {
+        let Self {
+            fcq,
+            socket,
+            registration,
+        } = self;
+
+        let DeviceRings { prod, cons, .. } = fcq;
+        let Socket { fd, .. } = socket;
+
+        let registration = Arc::new(registration);
+
+        let fill_queue = FillQueue {
+            fd: fd.clone(),
+            prod,
+            registration: registration.clone(),
+        };
+        let completion_queue = CompletionQueue {
+            fd,
+            cons,
+            registration,
+        };
+        (fill_queue, completion_queue)
+    }
 }
 
-impl Drop for DeviceQueue {
+impl FillQueue {
+    /// Prepare some buffers for the fill ring.
+    ///
+    /// The argument is an upper bound of buffers. Use the resulting object to pass specific
+    /// buffers to the fill queue and commit the write.
+    pub fn fill(&mut self, max: u32) -> WriteFill<'_> {
+        WriteFill {
+            idx: BufIdxIter::reserve(&mut self.prod, max),
+            queue: &mut self.prod,
+        }
+    }
+
+    /// Return the difference between our committed consumer state and the kernel's producer state.
+    pub fn pending(&self) -> u32 {
+        self.prod.count_pending()
+    }
+
+    /// Get the raw file descriptor of this ring.
+    ///
+    /// # Safety
+    ///
+    /// Use the file descriptor to attach the ring to an XSK map, for instance, but do not close it
+    /// and avoid modifying it (unless you know what you're doing). It should be treated as a
+    /// `BorrowedFd<'_>`. That said, it's not instant UB but probably delayed UB when the
+    /// `FillQueue` modifies a reused file descriptor that it assumes to own.
+    pub fn as_raw_fd(&self) -> libc::c_int {
+        self.fd.0
+    }
+
+    /// Query if the fill queue needs to be woken to proceed receiving.
+    ///
+    /// This is only accurate if `Umem::XDP_BIND_NEED_WAKEUP` was set.
+    pub fn needs_wakeup(&self) -> bool {
+        self.prod.check_flags() & RingTx::XDP_RING_NEED_WAKEUP != 0
+    }
+
+    /// Poll the fill queue descriptor, to wake it up.
+    pub fn wake(&mut self) {
+        // A bit more complex than TX, here we do a full poll on the FD.
+        let mut poll = libc::pollfd {
+            fd: self.fd.0,
+            events: 0,
+            revents: 0,
+        };
+
+        // FIXME: should somehow log this, right?
+        let _err = unsafe { libc::poll(&mut poll as *mut _, 1, 0) };
+    }
+}
+
+impl CompletionQueue {
+    /// Reap some buffers from the completion ring.
+    ///
+    /// Return an iterator over completed buffers.
+    ///
+    /// The argument is an upper bound of buffers. Use the resulting object to dequeue specific
+    /// buffers from the completion queue and commit the read.
+    pub fn complete(&mut self, n: u32) -> ReadComplete<'_> {
+        ReadComplete {
+            idx: BufIdxIter::peek(&mut self.cons, n),
+            queue: &mut self.cons,
+        }
+    }
+
+    /// Return the difference between our the kernel's producer state and our consumer head.
+    pub fn available(&self) -> u32 {
+        self.cons.count_pending()
+    }
+
+    /// Get the raw file descriptor of this ring.
+    ///
+    /// # Safety
+    ///
+    /// Use the file descriptor to attach the ring to an XSK map, for instance, but do not close it
+    /// and avoid modifying it (unless you know what you're doing). It should be treated as a
+    /// `BorrowedFd<'_>`. That said, it's not instant UB but probably delayed UB when the
+    /// `CompletionQueue` modifies a reused file descriptor that it assumes to own.
+    pub fn as_raw_fd(&self) -> libc::c_int {
+        self.fd.0
+    }
+}
+
+impl Drop for DeviceQueueRegistration {
     fn drop(&mut self) {
-        self.devices.remove(&self.socket.info.ctx);
+        self.devices.remove(&self.ctx);
     }
 }
 
