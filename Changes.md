@@ -1,3 +1,10 @@
+## v1.3.0
+
+- Add `FillQueue` and `CompletionQueue` types, which each represent one of the
+  rings associated with a `DeviceQueue`.
+- Add `DeviceQueue::into_parts` splitting the device into separate `FillQueue`
+  and `CompletionQueue` values.
+
 ## v1.2.1
 
 - Fix the behavior of `IfInfo::from_ifindex` to also setup the `ifindex`
